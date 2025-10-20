@@ -138,7 +138,7 @@ Best Performance: Optimized GPU
    12.0x faster than CPU
     Target achieved:  5x speedup goal
 
-🎉 CUDA Optimization Summary:
+CUDA Optimization Summary:
 ========================================
 3 optimization levels implemented
 Up to 12x speedup on large matrices
@@ -258,12 +258,11 @@ python simple_dashboard.py
 # URL: http://localhost:8050
 # Press Ctrl+C to stop
 ```
-
-**Success!** Open http://localhost:8050 in your browser to see the live GPU monitoring dashboard!
+Open http://localhost:8050 in your browser to see the live GPU monitoring dashboard!
 
 ### Detailed Windows Installation
 
-#### **Option A: Automatic Installation (Recommended)**
+####
 
 We've created a setup script that handles everything for you:
 
@@ -277,57 +276,6 @@ We've created a setup script that handles everything for you:
 # Test GPU connectivity
 # Launch the dashboard
 ```
-
-#### **Option B: Manual Installation**
-
-**1. System Requirements Check**
-```powershell
-# Check GPU
-nvidia-smi
-
-# Should show your NVIDIA GPU and driver version
-# If not found, install NVIDIA drivers from nvidia.com
-```
-
-**2. Python Setup**
-```powershell
-# Install Python via winget (Windows 10/11)
-winget install Python.Python.3.11
-
-# Or download from python.org
-# Make sure to check "Add Python to PATH"
-```
-
-**3. Project Setup**
-```powershell
-# Clone/download the project
-git clone https://github.com/yourusername/gpu-utilization-optimizer.git
-cd gpu-utilization-optimizer
-
-# Create virtual environment
-python -m venv venv
-
-# Activate environment
-.\venv\Scripts\Activate.ps1
-
-# Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-**4. Test Installation**
-```powershell
-# Test GPU monitoring
-python simple_gpu_monitor.py
-
-# Test CUDA demo (shows performance comparisons)
-python simple_cuda_demo.py
-
-# Launch dashboard
-python simple_dashboard.py
-```
-
-### Advanced Features (Optional)
 
 #### **CUDA Compilation (For Developers)**
 ```powershell
@@ -349,7 +297,7 @@ nvcc -arch=sm_75 -O3 -o cuda_demo cuda_demo.cu
 # Generate GPU load to see dashboard changes
 python gpu_load_test.py
 
-# Watch the dashboard metrics change in real-time!
+# Watch the dashboard metrics change in real-time
 ```
 
 ### Troubleshooting
@@ -389,20 +337,7 @@ netstat -an | findstr 8050
 # If in use, kill the process or use a different port
 ```
 
-#### **Getting Help**
-- **Documentation**: Check the `docs/` folder
-- **Issues**: Report bugs on GitHub Issues
-- **Discussions**: Ask questions on GitHub Discussions
-- **Contact**: Create an issue for support
 
-### What's Next?
-
-Once you have it running:
-
-1. **Explore the Dashboard**: Watch your GPU metrics in real-time
-2. **Run Demos**: Try `python simple_cuda_demo.py` to see performance comparisons
-3. **Customize**: Modify the dashboard or add your own monitoring
-4. **Contribute**: Help improve the project by submitting pull requests
 
 ## Usage Examples
 
@@ -519,7 +454,7 @@ GPU_Optimzer/
 - **Memory Efficiency**: 90% utilization
 - **Power Efficiency**: Optimized for performance per watt
 
-## 📈 Performance Results
+## Performance Results
 
 | Operation | CPU Time (ms) | GPU Time (ms) | Speedup |
 |-----------|---------------|---------------|---------|
@@ -527,7 +462,7 @@ GPU_Optimzer/
 | 1024x1024 Matrix | 11.97 | 1.0 | 12.0x |
 | 2048x2048 Matrix | 91.0 | 7.6 | 12.0x |
 
-## 🚀 Advanced Features
+##  Advanced Features
 
 ### CUDA Kernels
 - **Naive Implementation**: Basic GPU acceleration
