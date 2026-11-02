@@ -33,7 +33,7 @@ private:
     void initialize_device_handles();
     double calculate_memory_bandwidth(const MemoryMetrics& memory);
     void update_derived_metrics(GPUMetrics& metrics);
-    bool check_throttle_reasons(nvmlDevice_t device);
+    unsigned long long clock_throttle_reasons(nvmlDevice_t device);
 };
 
 

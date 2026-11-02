@@ -262,36 +262,60 @@ void NVMLMonitor::process_metrics(const GPUMetrics& metrics) {
     maintain_queue_size();
 }
 
+namespace {
+
+enum class Edge { kNone, kStarted, kCleared };
+
+// Records the new state of an alert and reports whether it just changed.
+Edge update_alert(bool& active, bool now) {
+    const Edge edge = (now && !active) ? Edge::kStarted : (!now && active) ? Edge::kCleared : Edge::kNone;
+    active = now;
+    return edge;
+}
+
+}  // namespace
+
 void NVMLMonitor::check_alerts(const GPUMetrics& metrics) {
-    // Temperature alert
-    if (metrics.thermal.gpu_temperature_c > temperature_threshold_) {
-        Logger::warn("High temperature alert: {}°C (threshold: {}°C)", 
-                    metrics.thermal.gpu_temperature_c, temperature_threshold_);
+    Edge e = update_alert(alerts_.temperature, metrics.thermal.gpu_temperature_c > temperature_threshold_);
+    if (e == Edge::kStarted) {
+        Logger::warn("High temperature: {}°C (threshold {}°C)", metrics.thermal.gpu_temperature_c, temperature_threshold_);
+    } else if (e == Edge::kCleared) {
+        Logger::info("Temperature back below {}°C", temperature_threshold_);
     }
-    
-    // Power alert
-    if (metrics.power.power_draw_watts > power_threshold_) {
-        Logger::warn("High power draw alert: {:.1f}W (threshold: {}W)", 
-                    metrics.power.power_draw_watts, power_threshold_);
+
+    e = update_alert(alerts_.power, metrics.power.power_draw_watts > power_threshold_);
+    if (e == Edge::kStarted) {
+        Logger::warn("High power draw: {:.1f}W (threshold {}W)", metrics.power.power_draw_watts, power_threshold_);
+    } else if (e == Edge::kCleared) {
+        Logger::info("Power draw back below {}W", power_threshold_);
     }
-    
-    // Memory alert
-    if (metrics.memory.usage_percentage > memory_threshold_ * 100) {
-        Logger::warn("High memory usage alert: {:.1f}% (threshold: {:.1f}%)", 
-                    metrics.memory.usage_percentage, memory_threshold_ * 100);
+
+    e = update_alert(alerts_.memory, metrics.memory.usage_percentage > memory_threshold_ * 100);
+    if (e == Edge::kStarted) {
+        Logger::warn("High memory usage: {:.1f}% (threshold {:.1f}%)", metrics.memory.usage_percentage, memory_threshold_ * 100);
+    } else if (e == Edge::kCleared) {
+        Logger::info("Memory usage back below {:.1f}%", memory_threshold_ * 100);
     }
-    
-    // Throttling alerts
-    if (metrics.is_throttled) {
-        Logger::warn("GPU throttling detected");
+
+    e = update_alert(alerts_.throttled, metrics.is_throttled);
+    if (e == Edge::kStarted) {
+        Logger::warn("Thermal throttling started (driver-reported)");
+    } else if (e == Edge::kCleared) {
+        Logger::info("Thermal throttling ended");
     }
-    
-    if (metrics.is_overheating) {
-        Logger::warn("GPU overheating detected");
+
+    e = update_alert(alerts_.overheating, metrics.is_overheating);
+    if (e == Edge::kStarted) {
+        Logger::warn("GPU overheating: {}°C", metrics.thermal.gpu_temperature_c);
+    } else if (e == Edge::kCleared) {
+        Logger::info("GPU temperature back to normal");
     }
-    
-    if (metrics.is_power_limited) {
-        Logger::warn("GPU power limiting detected");
+
+    e = update_alert(alerts_.power_limited, metrics.is_power_limited);
+    if (e == Edge::kStarted) {
+        Logger::warn("Power capping started: clocks reduced to stay under the {:.0f}W limit", metrics.power.power_limit_watts);
+    } else if (e == Edge::kCleared) {
+        Logger::info("Power capping ended");
     }
 }
 
@@ -310,17 +334,19 @@ void NVMLMonitor::cleanup_nvml() {
 }
 
 void NVMLMonitor::collect_gpu_info() {
-    nvmlReturn_t result = nvmlDeviceGetCount(&gpu_count_);
+    unsigned int count = 0;
+    nvmlReturn_t result = nvmlDeviceGetCount(&count);
     if (result != NVML_SUCCESS) {
         throw std::runtime_error("Failed to get GPU count: " + std::string(nvmlErrorString(result)));
     }
+    gpu_count_ = static_cast<int>(count);
     
     Logger::info("Found {} GPU(s)", gpu_count_);
     
     gpu_info_.clear();
     gpu_info_.reserve(gpu_count_);
     
-    for (unsigned int i = 0; i < gpu_count_; ++i) {
+    for (unsigned int i = 0; i < count; ++i) {
         nvmlDevice_t device;
         result = nvmlDeviceGetHandleByIndex(i, &device);
         if (result != NVML_SUCCESS) {

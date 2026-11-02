@@ -12,8 +12,8 @@ struct GPUInfo {
     int major_version;
     int minor_version;
     size_t total_memory_mb;
-    int max_clock_mhz;
-    int max_mem_clock_mhz;
+    unsigned int max_clock_mhz;
+    unsigned int max_mem_clock_mhz;
     int multiprocessor_count;
     int max_threads_per_multiprocessor;
     int max_threads_per_block;
@@ -28,6 +28,7 @@ struct PowerMetrics {
     double power_limit_watts;
     double power_usage_percentage;
     bool power_management_enabled;
+    bool power_cap_active;  // driver reports clocks reduced to stay under the power limit
 };
 
 struct ThermalMetrics {

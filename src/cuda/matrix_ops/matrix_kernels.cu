@@ -1,451 +1,230 @@
 #include "matrix_kernels.cuh"
-#include <cuda_runtime.h>
-#include <cooperative_groups.h>
-#include <cuda_fp16.h>
-#include <mma.h>
 
-using namespace cooperative_groups;
-namespace cg = cooperative_groups;
+#include <cstddef>
+#include <cstdint>
 
-// Constants
-constexpr int WARP_SIZE = 32;
-constexpr int MAX_THREADS_PER_BLOCK = 1024;
+namespace {
 
-// ================================
-// Basic Matrix Multiplication Kernels
-// ================================
+// Element (r, c) of a rows x cols row-major matrix, or 0 outside it. Used to
+// zero-pad partial tiles at the matrix edges.
+__device__ __forceinline__ float load_or_zero(const float* __restrict__ m,
+                                              int r, int c, int rows, int cols) {
+    return (r < rows && c < cols) ? m[static_cast<size_t>(r) * cols + c] : 0.0f;
+}
 
-__global__ void naive_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K) {
-    
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    
-    if (row < M && col < N) {
-        float sum = 0.0f;
-        for (int k = 0; k < K; ++k) {
-            sum += A[row * K + k] * B[k * N + col];
+// ---------------------------------------------------------------------------
+// Naive: one thread per output element. Every thread streams a full row of A
+// and column of B from global memory, so each input is re-read N (or M) times.
+// ---------------------------------------------------------------------------
+__global__ void naive_matmul_kernel(const float* __restrict__ A, const float* __restrict__ B,
+                                    float* __restrict__ C, int M, int N, int K) {
+    const int row = blockIdx.y * blockDim.y + threadIdx.y;
+    const int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= M || col >= N) return;
+
+    float acc = 0.0f;
+    for (int k = 0; k < K; ++k) {
+        acc += A[static_cast<size_t>(row) * K + k] * B[static_cast<size_t>(k) * N + col];
+    }
+    C[static_cast<size_t>(row) * N + col] = acc;
+}
+
+// ---------------------------------------------------------------------------
+// Tiled: a TILE x TILE thread block computes a TILE x TILE output tile. Each
+// step loads one tile of A and one of B into shared memory (one element per
+// thread), then every thread does TILE multiply-adds from shared memory, so
+// each global element is read once per tile instead of once per output.
+//
+// Bank conflicts: within a warp, As[ty][k] is the same word for every thread
+// in a row (a broadcast) and Bs[k][tx] is consecutive words, so this layout
+// is conflict-free without padding.
+// ---------------------------------------------------------------------------
+template <int TILE>
+__global__ void tiled_matmul_kernel(const float* __restrict__ A, const float* __restrict__ B,
+                                    float* __restrict__ C, int M, int N, int K) {
+    __shared__ float As[TILE][TILE];
+    __shared__ float Bs[TILE][TILE];
+
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+    const int row = blockIdx.y * TILE + ty;
+    const int col = blockIdx.x * TILE + tx;
+
+    float acc = 0.0f;
+    for (int t = 0; t < K; t += TILE) {
+        As[ty][tx] = load_or_zero(A, row, t + tx, M, K);
+        Bs[ty][tx] = load_or_zero(B, t + ty, col, K, N);
+        __syncthreads();
+
+#pragma unroll
+        for (int k = 0; k < TILE; ++k) {
+            acc += As[ty][k] * Bs[k][tx];
         }
-        C[row * N + col] = sum;
+        __syncthreads();  // everyone is done reading before the next tile overwrites it
+    }
+
+    if (row < M && col < N) {
+        C[static_cast<size_t>(row) * N + col] = acc;
     }
 }
 
-__global__ void tiled_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K) {
-    
-    constexpr int TILE_SIZE = 16;
-    __shared__ float As[TILE_SIZE][TILE_SIZE];
-    __shared__ float Bs[TILE_SIZE][TILE_SIZE];
-    
-    int bx = blockIdx.x, by = blockIdx.y;
-    int tx = threadIdx.x, ty = threadIdx.y;
-    
-    int row = by * TILE_SIZE + ty;
-    int col = bx * TILE_SIZE + tx;
-    
-    float sum = 0.0f;
-    
-    for (int tile = 0; tile < (K + TILE_SIZE - 1) / TILE_SIZE; ++tile) {
-        // Load tiles into shared memory
-        if (row < M && tile * TILE_SIZE + tx < K) {
-            As[ty][tx] = A[row * K + tile * TILE_SIZE + tx];
-        } else {
-            As[ty][tx] = 0.0f;
-        }
-        
-        if (col < N && tile * TILE_SIZE + ty < K) {
-            Bs[ty][tx] = B[(tile * TILE_SIZE + ty) * N + col];
-        } else {
-            Bs[ty][tx] = 0.0f;
-        }
-        
-        __syncthreads();
-        
-        // Compute partial sum
-        for (int k = 0; k < TILE_SIZE; ++k) {
-            sum += As[ty][k] * Bs[k][tx];
-        }
-        
-        __syncthreads();
-    }
-    
-    if (row < M && col < N) {
-        C[row * N + col] = sum;
-    }
-}
+// ---------------------------------------------------------------------------
+// Double-buffered: same 32x32 tiling, but with two shared-memory buffers. The
+// global loads for tile t+1 go into registers before the multiply-adds on
+// tile t, so their latency overlaps the math, and they are written to the
+// other buffer afterwards. Because the next tile never overwrites the one
+// being read, one __syncthreads() per tile is enough instead of two.
+// ---------------------------------------------------------------------------
+constexpr int kDbTile = 32;
 
-__global__ void shared_memory_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K) {
-    
-    constexpr int TILE_SIZE = 32;
-    __shared__ float As[TILE_SIZE][TILE_SIZE + 1]; // +1 to avoid bank conflicts
-    __shared__ float Bs[TILE_SIZE][TILE_SIZE + 1];
-    
-    int bx = blockIdx.x, by = blockIdx.y;
-    int tx = threadIdx.x, ty = threadIdx.y;
-    
-    int row = by * TILE_SIZE + ty;
-    int col = bx * TILE_SIZE + tx;
-    
-    float sum = 0.0f;
-    
-    for (int tile = 0; tile < (K + TILE_SIZE - 1) / TILE_SIZE; ++tile) {
-        // Coalesced loading into shared memory
-        if (row < M && tile * TILE_SIZE + tx < K) {
-            As[ty][tx] = A[row * K + tile * TILE_SIZE + tx];
-        } else {
-            As[ty][tx] = 0.0f;
-        }
-        
-        if (col < N && tile * TILE_SIZE + ty < K) {
-            Bs[ty][tx] = B[(tile * TILE_SIZE + ty) * N + col];
-        } else {
-            Bs[ty][tx] = 0.0f;
-        }
-        
-        __syncthreads();
-        
-        // Unrolled computation
-        #pragma unroll
-        for (int k = 0; k < TILE_SIZE; ++k) {
-            sum += As[ty][k] * Bs[k][tx];
-        }
-        
-        __syncthreads();
-    }
-    
-    if (row < M && col < N) {
-        C[row * N + col] = sum;
-    }
-}
+__global__ void double_buffered_matmul_kernel(const float* __restrict__ A, const float* __restrict__ B,
+                                              float* __restrict__ C, int M, int N, int K) {
+    __shared__ float As[2][kDbTile][kDbTile];
+    __shared__ float Bs[2][kDbTile][kDbTile];
 
-// ================================
-// Optimized Matrix Multiplication Kernels
-// ================================
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+    const int row = blockIdx.y * kDbTile + ty;
+    const int col = blockIdx.x * kDbTile + tx;
+    const int num_tiles = (K + kDbTile - 1) / kDbTile;
 
-__global__ void vectorized_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K) {
-    
-    constexpr int TILE_SIZE = 16;
-    constexpr int VECTOR_SIZE = 4;
-    
-    __shared__ float4 As[TILE_SIZE][TILE_SIZE / VECTOR_SIZE];
-    __shared__ float4 Bs[TILE_SIZE][TILE_SIZE / VECTOR_SIZE];
-    
-    int bx = blockIdx.x, by = blockIdx.y;
-    int tx = threadIdx.x, ty = threadIdx.y;
-    
-    int row = by * TILE_SIZE + ty;
-    int col = bx * TILE_SIZE + tx * VECTOR_SIZE;
-    
-    float4 sum = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
-    
-    for (int tile = 0; tile < (K + TILE_SIZE - 1) / TILE_SIZE; ++tile) {
-        // Vectorized loading
-        if (row < M && tile * TILE_SIZE + tx * VECTOR_SIZE < K) {
-            As[ty][tx] = *reinterpret_cast<const float4*>(
-                &A[row * K + tile * TILE_SIZE + tx * VECTOR_SIZE]);
-        } else {
-            As[ty][tx] = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
-        }
-        
-        if (col < N && tile * TILE_SIZE + ty < K) {
-            Bs[ty][tx] = *reinterpret_cast<const float4*>(
-                &B[(tile * TILE_SIZE + ty) * N + col]);
-        } else {
-            Bs[ty][tx] = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
-        }
-        
-        __syncthreads();
-        
-        // Vectorized computation
-        for (int k = 0; k < TILE_SIZE / VECTOR_SIZE; ++k) {
-            float4 a_vec = As[ty][k];
-            float4 b_vec = Bs[k][tx];
-            
-            sum.x += a_vec.x * b_vec.x + a_vec.y * b_vec.y + 
-                     a_vec.z * b_vec.z + a_vec.w * b_vec.w;
-            sum.y += a_vec.x * b_vec.y + a_vec.y * b_vec.z + 
-                     a_vec.z * b_vec.w + a_vec.w * b_vec.x;
-            sum.z += a_vec.x * b_vec.z + a_vec.y * b_vec.w + 
-                     a_vec.z * b_vec.x + a_vec.w * b_vec.y;
-            sum.w += a_vec.x * b_vec.w + a_vec.y * b_vec.x + 
-                     a_vec.z * b_vec.y + a_vec.w * b_vec.z;
-        }
-        
-        __syncthreads();
-    }
-    
-    if (row < M && col < N) {
-        *reinterpret_cast<float4*>(&C[row * N + col]) = sum;
-    }
-}
-
-__global__ void double_buffered_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K) {
-    
-    constexpr int TILE_SIZE = 32;
-    __shared__ float As[2][TILE_SIZE][TILE_SIZE + 1];
-    __shared__ float Bs[2][TILE_SIZE][TILE_SIZE + 1];
-    
-    int bx = blockIdx.x, by = blockIdx.y;
-    int tx = threadIdx.x, ty = threadIdx.y;
-    
-    int row = by * TILE_SIZE + ty;
-    int col = bx * TILE_SIZE + tx;
-    
-    float sum = 0.0f;
-    int buffer = 0;
-    
-    // Prefetch first tile
-    if (row < M && tx < K) {
-        As[buffer][ty][tx] = A[row * K + tx];
-    } else {
-        As[buffer][ty][tx] = 0.0f;
-    }
-    
-    if (col < N && ty < K) {
-        Bs[buffer][ty][tx] = B[ty * N + col];
-    } else {
-        Bs[buffer][ty][tx] = 0.0f;
-    }
-    
+    As[0][ty][tx] = load_or_zero(A, row, tx, M, K);
+    Bs[0][ty][tx] = load_or_zero(B, ty, col, K, N);
     __syncthreads();
-    
-    for (int tile = 0; tile < (K + TILE_SIZE - 1) / TILE_SIZE; ++tile) {
-        int next_buffer = 1 - buffer;
-        
-        // Prefetch next tile while computing current
-        if (tile + 1 < (K + TILE_SIZE - 1) / TILE_SIZE) {
-            if (row < M && (tile + 1) * TILE_SIZE + tx < K) {
-                As[next_buffer][ty][tx] = A[row * K + (tile + 1) * TILE_SIZE + tx];
-            } else {
-                As[next_buffer][ty][tx] = 0.0f;
-            }
-            
-            if (col < N && (tile + 1) * TILE_SIZE + ty < K) {
-                Bs[next_buffer][ty][tx] = B[((tile + 1) * TILE_SIZE + ty) * N + col];
-            } else {
-                Bs[next_buffer][ty][tx] = 0.0f;
-            }
+
+    float acc = 0.0f;
+    for (int t = 0; t < num_tiles; ++t) {
+        const int cur = t & 1;
+        const bool has_next = t + 1 < num_tiles;
+
+        float a_next = 0.0f;
+        float b_next = 0.0f;
+        if (has_next) {
+            a_next = load_or_zero(A, row, (t + 1) * kDbTile + tx, M, K);
+            b_next = load_or_zero(B, (t + 1) * kDbTile + ty, col, K, N);
         }
-        
-        // Compute using current buffer
-        #pragma unroll
-        for (int k = 0; k < TILE_SIZE; ++k) {
-            sum += As[buffer][ty][k] * Bs[buffer][k][tx];
+
+#pragma unroll
+        for (int k = 0; k < kDbTile; ++k) {
+            acc += As[cur][ty][k] * Bs[cur][k][tx];
         }
-        
+
+        if (has_next) {
+            As[cur ^ 1][ty][tx] = a_next;
+            Bs[cur ^ 1][ty][tx] = b_next;
+        }
         __syncthreads();
-        buffer = next_buffer;
     }
-    
+
     if (row < M && col < N) {
-        C[row * N + col] = sum;
+        C[static_cast<size_t>(row) * N + col] = acc;
     }
 }
 
-__global__ void warp_tiled_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K) {
-    
-    constexpr int WARP_TILE_M = 32;
-    constexpr int WARP_TILE_N = 32;
-    constexpr int WARP_TILE_K = 16;
-    
-    __shared__ float As[WARP_TILE_M][WARP_TILE_K + 1];
-    __shared__ float Bs[WARP_TILE_K][WARP_TILE_N + 1];
-    
-    auto warp = cg::tiled_partition<32>(cg::this_thread_block());
-    
-    int warp_row = (blockIdx.y * blockDim.y + threadIdx.y) / WARP_SIZE * WARP_TILE_M;
-    int warp_col = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE * WARP_TILE_N;
-    
-    int lane_id = threadIdx.x % WARP_SIZE;
-    int thread_row = warp_row + lane_id / 8;
-    int thread_col = warp_col + (lane_id % 8) * 4;
-    
-    float sum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    
-    for (int tile_k = 0; tile_k < K; tile_k += WARP_TILE_K) {
-        // Cooperative loading with warp
-        for (int i = lane_id; i < WARP_TILE_M * WARP_TILE_K; i += WARP_SIZE) {
-            int row = i / WARP_TILE_K;
-            int col = i % WARP_TILE_K;
-            
-            if (warp_row + row < M && tile_k + col < K) {
-                As[row][col] = A[(warp_row + row) * K + tile_k + col];
-            } else {
-                As[row][col] = 0.0f;
-            }
+// ---------------------------------------------------------------------------
+// float4 / register-blocked: a 32x32 output tile per block of 8x32 threads.
+// Each thread computes 4 adjacent outputs of one row, keeps them in a float4
+// accumulator, and reuses each A value it reads from shared memory 4 times.
+// Global loads, the B tile and the C store all use 16-byte float4 accesses.
+// ---------------------------------------------------------------------------
+constexpr int kVecTile = 32;
+constexpr int kVecWidth = 4;
+
+__global__ void float4_matmul_kernel(const float* __restrict__ A, const float* __restrict__ B,
+                                     float* __restrict__ C, int M, int N, int K) {
+    // A warp is 8 threads (tx) x 4 rows (ty). With a 32-float row stride,
+    // As[ty][k] for those 4 rows would all fall in the same bank (a 4-way
+    // conflict). Padding each row by 4 floats moves the rows to different
+    // banks and keeps every row 16-byte aligned for the float4 stores.
+    __shared__ __align__(16) float As[kVecTile][kVecTile + kVecWidth];
+    __shared__ float4 Bs[kVecTile][kVecTile / kVecWidth];
+
+    const int tx = threadIdx.x;  // 0..7: which group of 4 columns
+    const int ty = threadIdx.y;  // 0..31: row within the tile
+    const int row = blockIdx.y * kVecTile + ty;
+    const int col = blockIdx.x * kVecTile + tx * kVecWidth;  // first of this thread's 4 columns
+    const float4 zero = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+    float4 acc = zero;
+    for (int t = 0; t < K; t += kVecTile) {
+        // N and K are multiples of 4, so a float4 is either fully inside a row or fully outside it.
+        const int a_col = t + tx * kVecWidth;
+        const float4 a = (row < M && a_col < K)
+            ? *reinterpret_cast<const float4*>(&A[static_cast<size_t>(row) * K + a_col])
+            : zero;
+        *reinterpret_cast<float4*>(&As[ty][tx * kVecWidth]) = a;
+
+        const int b_row = t + ty;
+        Bs[ty][tx] = (b_row < K && col < N)
+            ? *reinterpret_cast<const float4*>(&B[static_cast<size_t>(b_row) * N + col])
+            : zero;
+        __syncthreads();
+
+#pragma unroll
+        for (int k = 0; k < kVecTile; ++k) {
+            const float a_k = As[ty][k];
+            const float4 b = Bs[k][tx];
+            acc.x += a_k * b.x;
+            acc.y += a_k * b.y;
+            acc.z += a_k * b.z;
+            acc.w += a_k * b.w;
         }
-        
-        for (int i = lane_id; i < WARP_TILE_K * WARP_TILE_N; i += WARP_SIZE) {
-            int row = i / WARP_TILE_N;
-            int col = i % WARP_TILE_N;
-            
-            if (tile_k + row < K && warp_col + col < N) {
-                Bs[row][col] = B[(tile_k + row) * N + warp_col + col];
-            } else {
-                Bs[row][col] = 0.0f;
-            }
-        }
-        
-        warp.sync();
-        
-        // Compute using warp shuffle for register reuse
-        #pragma unroll
-        for (int k = 0; k < WARP_TILE_K; ++k) {
-            float a_val = (thread_row < M && tile_k + k < K) ? As[thread_row - warp_row][k] : 0.0f;
-            
-            #pragma unroll
-            for (int i = 0; i < 4; ++i) {
-                if (thread_col + i < N) {
-                    float b_val = Bs[k][thread_col + i - warp_col];
-                    sum[i] += a_val * b_val;
-                }
-            }
-        }
-        
-        warp.sync();
+        __syncthreads();
     }
-    
-    // Write results
-    if (thread_row < M) {
-        #pragma unroll
-        for (int i = 0; i < 4; ++i) {
-            if (thread_col + i < N) {
-                C[thread_row * N + thread_col + i] = sum[i];
-            }
-        }
+
+    if (row < M && col < N) {
+        *reinterpret_cast<float4*>(&C[static_cast<size_t>(row) * N + col]) = acc;
     }
 }
 
-// ================================
-// Kernel Launchers
-// ================================
+bool valid_shape(int M, int N, int K) { return M > 0 && N > 0 && K > 0; }
 
-void launch_naive_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream) {
-    
-    dim3 block_size(16, 16);
-    dim3 grid_size((N + block_size.x - 1) / block_size.x, 
-                   (M + block_size.y - 1) / block_size.y);
-    
-    naive_matrix_multiply_kernel<<<grid_size, block_size, 0, stream>>>(A, B, C, M, N, K);
+bool aligned16(const void* p) { return reinterpret_cast<std::uintptr_t>(p) % 16 == 0; }
+
+dim3 grid_for(int M, int N, int tile) {
+    return dim3((N + tile - 1) / tile, (M + tile - 1) / tile);
 }
 
-void launch_tiled_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, int tile_size, cudaStream_t stream) {
-    
-    dim3 block_size(tile_size, tile_size);
-    dim3 grid_size((N + tile_size - 1) / tile_size, 
-                   (M + tile_size - 1) / tile_size);
-    
-    tiled_matrix_multiply_kernel<<<grid_size, block_size, 0, stream>>>(A, B, C, M, N, K);
+}  // namespace
+
+cudaError_t launch_naive_matmul(const float* A, const float* B, float* C,
+                                int M, int N, int K, cudaStream_t stream) {
+    if (!valid_shape(M, N, K)) return cudaErrorInvalidValue;
+    const dim3 block(16, 16);
+    naive_matmul_kernel<<<grid_for(M, N, 16), block, 0, stream>>>(A, B, C, M, N, K);
+    return cudaGetLastError();
 }
 
-void launch_shared_memory_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, int tile_size, cudaStream_t stream) {
-    
-    dim3 block_size(tile_size, tile_size);
-    dim3 grid_size((N + tile_size - 1) / tile_size, 
-                   (M + tile_size - 1) / tile_size);
-    
-    shared_memory_matrix_multiply_kernel<<<grid_size, block_size, 0, stream>>>(A, B, C, M, N, K);
+cudaError_t launch_tiled16_matmul(const float* A, const float* B, float* C,
+                                  int M, int N, int K, cudaStream_t stream) {
+    if (!valid_shape(M, N, K)) return cudaErrorInvalidValue;
+    const dim3 block(16, 16);
+    tiled_matmul_kernel<16><<<grid_for(M, N, 16), block, 0, stream>>>(A, B, C, M, N, K);
+    return cudaGetLastError();
 }
 
-void launch_vectorized_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream) {
-    
-    constexpr int TILE_SIZE = 16;
-    constexpr int VECTOR_SIZE = 4;
-    
-    dim3 block_size(TILE_SIZE / VECTOR_SIZE, TILE_SIZE);
-    dim3 grid_size((N + TILE_SIZE - 1) / TILE_SIZE, 
-                   (M + TILE_SIZE - 1) / TILE_SIZE);
-    
-    vectorized_matrix_multiply_kernel<<<grid_size, block_size, 0, stream>>>(A, B, C, M, N, K);
+cudaError_t launch_tiled32_matmul(const float* A, const float* B, float* C,
+                                  int M, int N, int K, cudaStream_t stream) {
+    if (!valid_shape(M, N, K)) return cudaErrorInvalidValue;
+    const dim3 block(32, 32);
+    tiled_matmul_kernel<32><<<grid_for(M, N, 32), block, 0, stream>>>(A, B, C, M, N, K);
+    return cudaGetLastError();
 }
 
-void launch_double_buffered_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream) {
-    
-    constexpr int TILE_SIZE = 32;
-    dim3 block_size(TILE_SIZE, TILE_SIZE);
-    dim3 grid_size((N + TILE_SIZE - 1) / TILE_SIZE, 
-                   (M + TILE_SIZE - 1) / TILE_SIZE);
-    
-    double_buffered_matrix_multiply_kernel<<<grid_size, block_size, 0, stream>>>(A, B, C, M, N, K);
+cudaError_t launch_double_buffered_matmul(const float* A, const float* B, float* C,
+                                          int M, int N, int K, cudaStream_t stream) {
+    if (!valid_shape(M, N, K)) return cudaErrorInvalidValue;
+    const dim3 block(kDbTile, kDbTile);
+    double_buffered_matmul_kernel<<<grid_for(M, N, kDbTile), block, 0, stream>>>(A, B, C, M, N, K);
+    return cudaGetLastError();
 }
 
-void launch_warp_tiled_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream) {
-    
-    constexpr int THREADS_PER_BLOCK = 256;
-    constexpr int WARPS_PER_BLOCK = THREADS_PER_BLOCK / WARP_SIZE;
-    
-    dim3 block_size(THREADS_PER_BLOCK, 1);
-    dim3 grid_size((N + 31) / 32, (M + 31) / 32);
-    
-    warp_tiled_matrix_multiply_kernel<<<grid_size, block_size, 0, stream>>>(A, B, C, M, N, K);
+cudaError_t launch_float4_matmul(const float* A, const float* B, float* C,
+                                 int M, int N, int K, cudaStream_t stream) {
+    if (!valid_shape(M, N, K)) return cudaErrorInvalidValue;
+    if (N % kVecWidth != 0 || K % kVecWidth != 0) return cudaErrorInvalidValue;
+    if (!aligned16(A) || !aligned16(B) || !aligned16(C)) return cudaErrorInvalidValue;
+    const dim3 block(kVecTile / kVecWidth, kVecTile);
+    float4_matmul_kernel<<<grid_for(M, N, kVecTile), block, 0, stream>>>(A, B, C, M, N, K);
+    return cudaGetLastError();
 }
-
-// ================================
-// Utility Functions
-// ================================
-
-int get_optimal_tile_size(int M, int N, int K) {
-    // Heuristic for optimal tile size based on problem dimensions
-    int avg_dim = (M + N + K) / 3;
-    
-    if (avg_dim < 512) return 16;
-    else if (avg_dim < 2048) return 24;
-    else return 32;
-}
-
-dim3 get_optimal_grid_size(int M, int N, int tile_size) {
-    return dim3((N + tile_size - 1) / tile_size, 
-                (M + tile_size - 1) / tile_size);
-}
-
-dim3 get_optimal_block_size(int tile_size) {
-    return dim3(tile_size, tile_size);
-}
-
-bool supports_tensor_cores() {
-    int device;
-    cudaGetDevice(&device);
-    
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, device);
-    
-    // Tensor Cores available on Volta (7.0), Turing (7.5), Ampere (8.0+)
-    return (prop.major >= 7 && prop.minor >= 0);
-}
-
-size_t get_shared_memory_per_block() {
-    int device;
-    cudaGetDevice(&device);
-    
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, device);
-    
-    return prop.sharedMemPerBlock;
-}
-
-
-
-
-

@@ -1,5 +1,5 @@
 # NVML monitoring library
-add_library(nvml_monitoring
+add_library(nvml_monitoring STATIC
     nvml_monitor.cpp
     metrics_collector.cpp
     data_processor.cpp
@@ -8,15 +8,11 @@ add_library(nvml_monitoring
 
 target_include_directories(nvml_monitoring PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/src
 )
 
-target_link_libraries(nvml_monitoring
-    ${NVML_LIBRARY}
+target_link_libraries(nvml_monitoring PUBLIC
+    gpu_common
+    CUDA::nvml
     Threads::Threads
 )
-
-
-
-
-

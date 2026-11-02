@@ -9,6 +9,7 @@
 #include <queue>
 #include <nvml.h>
 
+#include <functional>
 #include "common/config.h"
 #include "gpu_metrics.h"
 #include "metrics_collector.h"
@@ -55,7 +56,7 @@ private:
     
     // Threading
     std::unique_ptr<std::thread> monitor_thread_;
-    std::mutex metrics_mutex_;
+    mutable std::mutex metrics_mutex_;  // locked by const getters
     std::condition_variable metrics_cv_;
     
     // Components
@@ -74,6 +75,18 @@ private:
     int temperature_threshold_;
     int power_threshold_;
     double memory_threshold_;
+    
+    // Which alerts are currently active, so each is logged once when it
+    // starts and once when it clears instead of on every sample.
+    struct AlertState {
+        bool temperature = false;
+        bool power = false;
+        bool memory = false;
+        bool throttled = false;
+        bool overheating = false;
+        bool power_limited = false;
+    };
+    AlertState alerts_;
     
     // GPU information
     std::vector<GPUInfo> gpu_info_;
