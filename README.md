@@ -76,7 +76,8 @@ src/cuda/matrix_ops/        SGEMM kernels and launchers
 benchmarks/                 matmul_benchmark: CPU validation + CUDA-event timing
 src/nvml/, src/common/      C++ NVML monitor, config, logging
 src/main.cpp                gpu_optimizer CLI (C++ monitor)
-simple_dashboard.py         Dash web dashboard
+src/python/gpu_optimizer/   Dash web dashboard (gpu-dashboard after pip install -e .)
+simple_dashboard.py         Runs the dashboard without installing the package
 simple_gpu_monitor.py       Python command-line monitor
 CMakeLists.txt              Builds the kernels, benchmark and C++ monitor
 ```

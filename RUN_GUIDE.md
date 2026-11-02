@@ -60,7 +60,7 @@ Run the C++ NVML monitor
 Common troubleshooting
 - NVML/library not found: update NVIDIA drivers and ensure driver libraries are on the system path.
 - Python module errors: verify virtual environment activation and run pip install -r requirements.txt.
-- Dashboard port in use: check port 8050 and either stop the occupying process or change the port in simple_dashboard.py.
+- Dashboard port in use: check port 8050 and either stop the occupying process or pick another port: python simple_dashboard.py --port 8051
 - CUDA compilation errors: confirm CUDA Toolkit and nvcc are installed and the target architecture (sm_XX) matches your GPU.
 
 Notes
