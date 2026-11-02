@@ -1,111 +1,32 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <cooperative_groups.h>
 
-// Kernel function declarations
-extern "C" {
+// Single-precision matrix multiply, C = A * B, all matrices row-major:
+//   A is M x K, B is K x N, C is M x N.
+//
+// Each launcher enqueues one kernel on `stream` and returns the launch status
+// (cudaSuccess, or the error from cudaGetLastError()). They return
+// cudaErrorInvalidValue for shapes the kernel does not support.
+//
+// Kernels, from slowest to fastest:
+//   naive            one thread per output, reads A and B straight from global memory
+//   tiled16/tiled32  stage TILE x TILE blocks of A and B in shared memory
+//   double_buffered  32x32 tiles, loads the next tile while computing the current one
+//   float4           32x32 tiles, float4 loads, each thread computes 4 outputs
+//                    (needs N and K divisible by 4 and 16-byte aligned pointers)
 
-// Basic kernels
-__global__ void naive_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K);
+cudaError_t launch_naive_matmul(const float* A, const float* B, float* C,
+                                int M, int N, int K, cudaStream_t stream = 0);
 
-__global__ void tiled_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K);
+cudaError_t launch_tiled16_matmul(const float* A, const float* B, float* C,
+                                  int M, int N, int K, cudaStream_t stream = 0);
 
-__global__ void shared_memory_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K);
+cudaError_t launch_tiled32_matmul(const float* A, const float* B, float* C,
+                                  int M, int N, int K, cudaStream_t stream = 0);
 
-// Optimized kernels
-__global__ void vectorized_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K);
+cudaError_t launch_double_buffered_matmul(const float* A, const float* B, float* C,
+                                          int M, int N, int K, cudaStream_t stream = 0);
 
-__global__ void double_buffered_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K);
-
-__global__ void warp_tiled_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K);
-
-__global__ void bank_conflict_free_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K);
-
-// Advanced kernels
-__global__ void tensor_core_matrix_multiply_kernel(
-    const __half* A, const __half* B, float* C, 
-    int M, int N, int K);
-
-__global__ void mixed_precision_matrix_multiply_kernel(
-    const __half* A, const __half* B, float* C, 
-    int M, int N, int K);
-
-__global__ void prefetch_matrix_multiply_kernel(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K);
-
-}
-
-// Template kernels for different data types
-template<typename T, int TILE_SIZE>
-__global__ void templated_matrix_multiply_kernel(
-    const T* A, const T* B, T* C, 
-    int M, int N, int K);
-
-// Kernel launcher functions
-void launch_naive_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream = 0);
-
-void launch_tiled_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, int tile_size = 16, cudaStream_t stream = 0);
-
-void launch_shared_memory_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, int tile_size = 32, cudaStream_t stream = 0);
-
-void launch_vectorized_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream = 0);
-
-void launch_double_buffered_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream = 0);
-
-void launch_warp_tiled_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream = 0);
-
-void launch_bank_conflict_free_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream = 0);
-
-void launch_tensor_core_matrix_multiply(
-    const __half* A, const __half* B, float* C, 
-    int M, int N, int K, cudaStream_t stream = 0);
-
-void launch_mixed_precision_matrix_multiply(
-    const __half* A, const __half* B, float* C, 
-    int M, int N, int K, cudaStream_t stream = 0);
-
-void launch_prefetch_matrix_multiply(
-    const float* A, const float* B, float* C, 
-    int M, int N, int K, cudaStream_t stream = 0);
-
-// Utility functions
-int get_optimal_tile_size(int M, int N, int K);
-dim3 get_optimal_grid_size(int M, int N, int tile_size);
-dim3 get_optimal_block_size(int tile_size);
-bool supports_tensor_cores();
-size_t get_shared_memory_per_block();
-
-
-
-
-
+cudaError_t launch_float4_matmul(const float* A, const float* B, float* C,
+                                 int M, int N, int K, cudaStream_t stream = 0);
