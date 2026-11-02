@@ -72,14 +72,34 @@ private:
         return oss.str();
     }
     
+    // Replaces each "{}" or "{:.Nf}" (fixed-point, N decimals) with the next
+    // argument. Other text, including other braces, is copied unchanged.
     template<typename T, typename... Args>
     static void format_string_impl(std::ostringstream& oss, const std::string& format, T&& value, Args&&... args) {
-        size_t pos = format.find("{}");
-        if (pos != std::string::npos) {
-            oss << format.substr(0, pos) << value;
-            format_string_impl(oss, format.substr(pos + 2), std::forward<Args>(args)...);
-        } else {
-            oss << format;
+        size_t search = 0;
+        while (true) {
+            const size_t open = format.find('{', search);
+            const size_t close = (open == std::string::npos) ? std::string::npos : format.find('}', open);
+            if (close == std::string::npos) {
+                oss << format;  // more arguments than placeholders
+                return;
+            }
+            const std::string spec = format.substr(open + 1, close - open - 1);
+            const bool plain = spec.empty();
+            const bool fixed = spec.size() >= 4 && spec.compare(0, 2, ":.") == 0 && spec.back() == 'f' &&
+                               spec.find_first_not_of("0123456789", 2) == spec.size() - 1;
+            if (!plain && !fixed) {
+                search = open + 1;  // not a placeholder; keep looking
+                continue;
+            }
+            std::ostringstream field;
+            if (fixed) {
+                field << std::fixed << std::setprecision(std::stoi(spec.substr(2, spec.size() - 3)));
+            }
+            field << value;
+            oss << format.substr(0, open) << field.str();
+            format_string_impl(oss, format.substr(close + 1), std::forward<Args>(args)...);
+            return;
         }
     }
     

@@ -73,9 +73,9 @@ PowerMetrics MetricsCollector::collect_power_metrics(nvmlDevice_t device) {
         power.power_draw_watts = static_cast<double>(power_draw) / 1000.0; // mW to W
     }
     
-    // Power limit
+    // Power limit currently in force (not the maximum the board allows)
     unsigned int power_limit;
-    result = nvmlDeviceGetPowerManagementLimitConstraints(device, nullptr, &power_limit);
+    result = nvmlDeviceGetEnforcedPowerLimit(device, &power_limit);
     if (result == NVML_SUCCESS) {
         power.power_limit_watts = static_cast<double>(power_limit) / 1000.0; // mW to W
         
@@ -90,6 +90,10 @@ PowerMetrics MetricsCollector::collect_power_metrics(nvmlDevice_t device) {
     if (result == NVML_SUCCESS) {
         power.power_management_enabled = (pm_mode == NVML_FEATURE_ENABLED);
     }
+    
+    power.power_cap_active = (clock_throttle_reasons(device) &
+                              (nvmlClocksThrottleReasonSwPowerCap |
+                               nvmlClocksThrottleReasonHwPowerBrakeSlowdown)) != 0;
     
     return power;
 }
@@ -131,8 +135,10 @@ ThermalMetrics MetricsCollector::collect_thermal_metrics(nvmlDevice_t device) {
         thermal.max_operating_temperature_c = static_cast<int>(temp);
     }
     
-    // Check for thermal throttling
-    thermal.thermal_throttling_active = check_throttle_reasons(device);
+    // Thermal throttling is reported by either the driver (software) or the board (hardware).
+    thermal.thermal_throttling_active = (clock_throttle_reasons(device) &
+                                         (nvmlClocksThrottleReasonSwThermalSlowdown |
+                                          nvmlClocksThrottleReasonHwThermalSlowdown)) != 0;
     
     return thermal;
 }
@@ -362,23 +368,21 @@ void MetricsCollector::update_derived_metrics(GPUMetrics& metrics) {
     
     // Performance indicators
     metrics.is_overheating = metrics.thermal.gpu_temperature_c > 85; // Default threshold
-    metrics.is_power_limited = metrics.power.power_usage_percentage > 95.0;
+    metrics.is_power_limited = metrics.power.power_cap_active;
     metrics.is_memory_bottlenecked = (metrics.utilization.memory_utilization_percentage > 90 && 
                                      metrics.utilization.gpu_utilization_percentage < 50);
     metrics.is_throttled = metrics.thermal.thermal_throttling_active;
 }
 
-bool MetricsCollector::check_throttle_reasons(nvmlDevice_t device) {
-    unsigned long long reasons;
-    nvmlReturn_t result = nvmlDeviceGetCurrentClocksThrottleReasons(device, &reasons);
-    
-    if (result == NVML_SUCCESS) {
-        // Thermal throttling is reported by either the driver (software) or the board (hardware).
-        return (reasons & (nvmlClocksThrottleReasonSwThermalSlowdown |
-                           nvmlClocksThrottleReasonHwThermalSlowdown)) != 0;
+// Why the driver is currently holding clocks below their maximum, as an
+// nvmlClocksThrottleReason* bitmask (0 if the query fails). An idle GPU reports
+// nvmlClocksThrottleReasonGpuIdle, which is normal and not a problem.
+unsigned long long MetricsCollector::clock_throttle_reasons(nvmlDevice_t device) {
+    unsigned long long reasons = 0;
+    if (nvmlDeviceGetCurrentClocksThrottleReasons(device, &reasons) != NVML_SUCCESS) {
+        return 0;
     }
-    
-    return false;
+    return reasons;
 }
 
 

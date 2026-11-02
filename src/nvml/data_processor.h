@@ -44,7 +44,6 @@ private:
     // Thresholds
     double memory_bottleneck_threshold_;
     double thermal_throttle_threshold_;
-    double power_limit_threshold_;
     
     // Helper functions
     void update_recent_metrics(const GPUMetrics& metrics);

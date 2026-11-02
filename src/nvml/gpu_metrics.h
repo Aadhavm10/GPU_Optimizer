@@ -28,6 +28,7 @@ struct PowerMetrics {
     double power_limit_watts;
     double power_usage_percentage;
     bool power_management_enabled;
+    bool power_cap_active;  // driver reports clocks reduced to stay under the power limit
 };
 
 struct ThermalMetrics {

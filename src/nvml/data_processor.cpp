@@ -7,8 +7,7 @@
 DataProcessor::DataProcessor(const Config& config) 
     : config_(config),
       memory_bottleneck_threshold_(0.9),
-      thermal_throttle_threshold_(85.0),
-      power_limit_threshold_(0.95) {
+      thermal_throttle_threshold_(85.0) {
     
     recent_metrics_.reserve(MAX_RECENT_METRICS);
 }
@@ -48,58 +47,14 @@ bool DataProcessor::detect_memory_bottleneck(const GPUMetrics& metrics) {
     return high_mem_low_gpu || memory_pressure;
 }
 
+// A falling clock on its own is not throttling: the GPU drops its clocks
+// every time it goes idle. These use the reasons the driver reports instead.
 bool DataProcessor::detect_thermal_throttling(const GPUMetrics& metrics) {
-    // Check temperature thresholds
-    bool high_temp = metrics.thermal.gpu_temperature_c > thermal_throttle_threshold_;
-    
-    // Check if explicitly reported by driver
-    bool throttling_active = metrics.thermal.thermal_throttling_active;
-    
-    // Check for performance drops due to temperature
-    bool performance_drop = false;
-    if (recent_metrics_.size() > 10) {
-        // Compare current clocks to recent average
-        double recent_avg_clock = 0.0;
-        size_t count = std::min(static_cast<size_t>(10), recent_metrics_.size());
-        
-        for (size_t i = recent_metrics_.size() - count; i < recent_metrics_.size(); ++i) {
-            recent_avg_clock += recent_metrics_[i].clocks.graphics_clock_mhz;
-        }
-        recent_avg_clock /= count;
-        
-        // If current clock is significantly lower than recent average
-        performance_drop = metrics.clocks.graphics_clock_mhz < (recent_avg_clock * 0.9);
-    }
-    
-    return high_temp || throttling_active || performance_drop;
+    return metrics.thermal.thermal_throttling_active;
 }
 
 bool DataProcessor::detect_power_limiting(const GPUMetrics& metrics) {
-    // Power limiting indicators:
-    // 1. Power usage near limit
-    // 2. Clocks dropping while temperature is reasonable
-    
-    bool near_power_limit = metrics.power.power_usage_percentage > (power_limit_threshold_ * 100);
-    
-    // Check for clock reduction without thermal issues
-    bool clock_reduction = false;
-    if (recent_metrics_.size() > 5) {
-        double recent_avg_clock = 0.0;
-        size_t count = std::min(static_cast<size_t>(5), recent_metrics_.size());
-        
-        for (size_t i = recent_metrics_.size() - count; i < recent_metrics_.size(); ++i) {
-            recent_avg_clock += recent_metrics_[i].clocks.graphics_clock_mhz;
-        }
-        recent_avg_clock /= count;
-        
-        // Clock reduction without high temperature suggests power limiting
-        bool clocks_dropped = metrics.clocks.graphics_clock_mhz < (recent_avg_clock * 0.95);
-        bool temp_reasonable = metrics.thermal.gpu_temperature_c < (thermal_throttle_threshold_ - 5);
-        
-        clock_reduction = clocks_dropped && temp_reasonable;
-    }
-    
-    return near_power_limit || clock_reduction;
+    return metrics.power.power_cap_active;
 }
 
 bool DataProcessor::detect_compute_bottleneck(const GPUMetrics& metrics) {
