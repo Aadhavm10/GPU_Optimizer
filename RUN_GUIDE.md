@@ -9,8 +9,8 @@ Prerequisites
 
 Quick setup
 1. Clone the repository
-   git clone https://github.com/Aadhavm10/GPU_Optimzer.git
-   cd GPU_Optimzer
+   git clone https://github.com/Aadhavm10/GPU_Optimizer.git
+   cd GPU_Optimizer
 
 2. Create and activate a Python virtual environment
    python -m venv venv
