@@ -168,8 +168,6 @@ configure_build() {
     cmake .. \
         $CMAKE_GENERATOR \
         -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_TESTS=ON \
-        -DBUILD_PYTHON_BINDINGS=ON \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     
     print_success "CMake configuration completed"
@@ -248,11 +246,11 @@ verify_installation() {
         return 1
     fi
     
-    # Test GPU detection
+    # Check every CUDA kernel against the CPU reference
     if command_exists nvidia-smi; then
-        print_status "Testing GPU detection..."
-        ./build/gpu_optimizer --profile-matrix 64 > /dev/null 2>&1 || true
-        print_success "GPU detection test completed"
+        print_status "Validating CUDA kernels..."
+        ./build/matmul_benchmark --check > /dev/null
+        print_success "All CUDA kernels match the CPU reference"
     fi
 }
 
@@ -377,9 +375,8 @@ main() {
     echo "=================================================================="
     echo ""
     echo "Next steps:"
-    echo "  1. Run basic benchmark:    ./build/gpu_optimizer --benchmark"
-    echo "  2. Start monitoring:       ./build/gpu_optimizer --daemon"
-    echo "  3. Profile operations:     ./build/gpu_optimizer --profile-matrix 1024"
+    echo "  1. Benchmark the kernels:  ./build/matmul_benchmark 2048"
+    echo "  2. Start monitoring:       ./build/gpu_optimizer"
     echo ""
     if [[ "$NO_PYTHON" == false ]]; then
         echo "  4. Start Python dashboard: source venv/bin/activate && gpu-dashboard"

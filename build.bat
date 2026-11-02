@@ -185,8 +185,6 @@ REM Configure with CMake
 cmake .. ^
     %CMAKE_GENERATOR% ^
     -DCMAKE_BUILD_TYPE=Release ^
-    -DBUILD_TESTS=ON ^
-    -DBUILD_PYTHON_BINDINGS=ON ^
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 if %errorlevel% neq 0 (
@@ -272,9 +270,8 @@ echo %SUCCESS_PREFIX% Build completed successfully!
 echo ==================================================================
 echo.
 echo Next steps:
-echo   1. Run basic benchmark:    build\gpu_optimizer.exe --benchmark
-echo   2. Start monitoring:       build\gpu_optimizer.exe --daemon
-echo   3. Profile operations:     build\gpu_optimizer.exe --profile-matrix 1024
+echo   1. Benchmark the kernels:  build\matmul_benchmark.exe 2048
+echo   2. Start monitoring:       build\gpu_optimizer.exe
 echo.
 if %NO_PYTHON% equ 0 (
     echo   4. Start Python dashboard: venv\Scripts\activate ^&^& gpu-dashboard

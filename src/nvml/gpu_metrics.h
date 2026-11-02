@@ -12,8 +12,8 @@ struct GPUInfo {
     int major_version;
     int minor_version;
     size_t total_memory_mb;
-    int max_clock_mhz;
-    int max_mem_clock_mhz;
+    unsigned int max_clock_mhz;
+    unsigned int max_mem_clock_mhz;
     int multiprocessor_count;
     int max_threads_per_multiprocessor;
     int max_threads_per_block;

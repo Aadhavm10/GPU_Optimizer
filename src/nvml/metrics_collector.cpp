@@ -1,5 +1,6 @@
 #include "metrics_collector.h"
 #include "common/logger.h"
+#include <algorithm>
 #include <stdexcept>
 #include <cstring>
 
@@ -104,10 +105,13 @@ ThermalMetrics MetricsCollector::collect_thermal_metrics(nvmlDevice_t device) {
         thermal.gpu_temperature_c = static_cast<int>(temp);
     }
     
-    // Memory temperature (if available)
-    result = nvmlDeviceGetTemperature(device, NVML_TEMPERATURE_MEMORY, &temp);
-    if (result == NVML_SUCCESS) {
-        thermal.memory_temperature_c = static_cast<int>(temp);
+    // Memory temperature is a field value, not a nvmlTemperatureSensors_t.
+    // Most GeForce cards report it as not supported, which leaves it at 0.
+    nvmlFieldValue_t mem_temp{};
+    mem_temp.fieldId = NVML_FI_DEV_MEMORY_TEMP;
+    if (nvmlDeviceGetFieldValues(device, 1, &mem_temp) == NVML_SUCCESS &&
+        mem_temp.nvmlReturn == NVML_SUCCESS) {
+        thermal.memory_temperature_c = static_cast<int>(mem_temp.value.uiVal);
     }
     
     // Temperature thresholds
@@ -121,7 +125,8 @@ ThermalMetrics MetricsCollector::collect_thermal_metrics(nvmlDevice_t device) {
         thermal.slowdown_temperature_c = static_cast<int>(temp);
     }
     
-    result = nvmlDeviceGetTemperatureThreshold(device, NVML_TEMPERATURE_THRESHOLD_MAX_OPERATING, &temp);
+    // GPU temperature above which clocks may drop below base clock.
+    result = nvmlDeviceGetTemperatureThreshold(device, NVML_TEMPERATURE_THRESHOLD_GPU_MAX, &temp);
     if (result == NVML_SUCCESS) {
         thermal.max_operating_temperature_c = static_cast<int>(temp);
     }
@@ -368,8 +373,9 @@ bool MetricsCollector::check_throttle_reasons(nvmlDevice_t device) {
     nvmlReturn_t result = nvmlDeviceGetCurrentClocksThrottleReasons(device, &reasons);
     
     if (result == NVML_SUCCESS) {
-        // Check for thermal throttling specifically
-        return (reasons & nvmlClocksThrottleReasonThermalSlowdown) != 0;
+        // Thermal throttling is reported by either the driver (software) or the board (hardware).
+        return (reasons & (nvmlClocksThrottleReasonSwThermalSlowdown |
+                           nvmlClocksThrottleReasonHwThermalSlowdown)) != 0;
     }
     
     return false;

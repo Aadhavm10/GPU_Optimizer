@@ -59,8 +59,8 @@ Makefile
 *.exe
 *.out
 *.app
-cuda_demo
-gpu_optimizer
+/matmul_benchmark
+/gpu_optimizer
 
 # Data files
 *.csv

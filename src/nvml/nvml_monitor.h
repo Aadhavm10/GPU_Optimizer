@@ -9,6 +9,7 @@
 #include <queue>
 #include <nvml.h>
 
+#include <functional>
 #include "common/config.h"
 #include "gpu_metrics.h"
 #include "metrics_collector.h"
@@ -55,7 +56,7 @@ private:
     
     // Threading
     std::unique_ptr<std::thread> monitor_thread_;
-    std::mutex metrics_mutex_;
+    mutable std::mutex metrics_mutex_;  // locked by const getters
     std::condition_variable metrics_cv_;
     
     // Components

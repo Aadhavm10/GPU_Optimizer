@@ -310,17 +310,19 @@ void NVMLMonitor::cleanup_nvml() {
 }
 
 void NVMLMonitor::collect_gpu_info() {
-    nvmlReturn_t result = nvmlDeviceGetCount(&gpu_count_);
+    unsigned int count = 0;
+    nvmlReturn_t result = nvmlDeviceGetCount(&count);
     if (result != NVML_SUCCESS) {
         throw std::runtime_error("Failed to get GPU count: " + std::string(nvmlErrorString(result)));
     }
+    gpu_count_ = static_cast<int>(count);
     
     Logger::info("Found {} GPU(s)", gpu_count_);
     
     gpu_info_.clear();
     gpu_info_.reserve(gpu_count_);
     
-    for (unsigned int i = 0; i < gpu_count_; ++i) {
+    for (unsigned int i = 0; i < count; ++i) {
         nvmlDevice_t device;
         result = nvmlDeviceGetHandleByIndex(i, &device);
         if (result != NVML_SUCCESS) {
