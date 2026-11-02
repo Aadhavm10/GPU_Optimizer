@@ -1,6 +1,6 @@
 # GPU Utilization Optimizer
 
-Real-time NVIDIA GPU monitoring dashboard plus hand-written CUDA kernels that take matrix multiplication from naive to optimized.
+Real-time NVIDIA GPU monitoring dashboard plus CUDA SGEMM kernels that take matrix multiplication from naive to register-blocked, each validated against a CPU reference.
 
 ![CUDA](https://img.shields.io/badge/CUDA-76B900?logo=nvidia&logoColor=white)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
@@ -14,13 +14,19 @@ Real-time NVIDIA GPU monitoring dashboard plus hand-written CUDA kernels that ta
 ## Highlights
 
 - **Live GPU telemetry:** reads utilization, memory, temperature and power through NVIDIA's NVML API and charts them in a Plotly Dash web dashboard that refreshes every 2 seconds.
-- **CUDA kernel optimization:** matrix multiply written six ways (naive, tiled, shared memory, `float4`-vectorized, double-buffered, warp-tiled), plus parallel reductions and vector ops (SAXPY, dot product, norm, min/max).
-- **Native C++ monitor:** NVML device discovery, metrics collection and processing, config and logging in C++17, built with CMake.
-- **Cross-platform tooling:** build and setup scripts for both Windows and Linux.
+- **Four CUDA SGEMM kernels,** each a step up from the last:
+  1. naive, one thread per output
+  2. shared-memory tiled (16×16 and 32×32 tiles)
+  3. double-buffered, which loads the next tile while computing the current one
+  4. register-blocked, with `float4` loads and 4 outputs per thread
+- **Validated, not just timed:** `matmul_benchmark` compares every kernel against a CPU reference before timing it. It reports time, GFLOP/s, speedup over the CPU and max error. `--check` (run by `ctest`) also tests non-square shapes that aren't multiples of the tile size.
+- **C++ NVML monitor:** a background sampling thread plus metrics collection and processing in C++17. The CMake build compiles it alongside the kernels.
 
 ## Quick start
 
 Requires an NVIDIA GPU with current drivers.
+
+**Dashboard (Python):**
 
 ```bash
 git clone https://github.com/Aadhavm10/GPU_Optimizer.git
@@ -31,7 +37,16 @@ pip install -r requirements.txt
 python simple_dashboard.py      # then open http://localhost:8050
 ```
 
-For the CLI monitor, the CUDA benchmark build and troubleshooting, see [RUN_GUIDE.md](RUN_GUIDE.md).
+**CUDA kernels (needs the CUDA Toolkit and CMake 3.20+):**
+
+```bash
+cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=75   # 86 for RTX 30xx, 89 for RTX 40xx
+cmake --build build --config Release
+./build/matmul_benchmark --check                     # correctness on odd shapes
+./build/matmul_benchmark 2048                        # timing table
+```
+
+[RUN_GUIDE.md](RUN_GUIDE.md) covers the CLI monitor and troubleshooting.
 
 ## Command-line monitor
 
@@ -40,14 +55,13 @@ For the CLI monitor, the CUDA benchmark build and troubleshooting, see [RUN_GUID
 ## Project structure
 
 ```
-src/cuda/              CUDA kernels (matrix_ops, vector_ops) and profiling timers
-src/nvml/              C++ NVML monitor and metrics collector
-src/common/            Config and logging
-simple_dashboard.py    Dash web dashboard
-simple_gpu_monitor.py  Command-line monitor
-cuda_demo.cu           Standalone matmul benchmark (naive / tiled / optimized)
-gpu_load_test.py       Synthetic GPU load to exercise the dashboard
-CMakeLists.txt         Native C++/CUDA build
+src/cuda/matrix_ops/        SGEMM kernels and launchers
+benchmarks/                 matmul_benchmark: CPU validation + CUDA-event timing
+src/nvml/, src/common/      C++ NVML monitor, config, logging
+src/main.cpp                gpu_optimizer CLI (C++ monitor)
+simple_dashboard.py         Dash web dashboard
+simple_gpu_monitor.py       Python command-line monitor
+CMakeLists.txt              Builds the kernels, benchmark and C++ monitor
 ```
 
 ## License

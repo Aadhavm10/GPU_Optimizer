@@ -110,10 +110,6 @@ function Test-Installation {
         python simple_gpu_monitor.py
         Write-Host "✅ GPU monitoring test passed!" -ForegroundColor Green
         
-        Write-Host "Testing CUDA demo..." -ForegroundColor Cyan
-        python simple_cuda_demo.py
-        Write-Host "✅ CUDA demo test passed!" -ForegroundColor Green
-        
         return $true
     } catch {
         Write-Host "❌ Installation test failed: $($_.Exception.Message)" -ForegroundColor Red

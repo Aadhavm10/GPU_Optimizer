@@ -32,22 +32,30 @@ Run the web dashboard
 - Open: http://localhost:8050
 - The dashboard refreshes metrics every ~2 seconds.
 
-Run the CUDA performance demo
-- If binaries are not provided, compile the demo:
-  nvcc -arch=sm_75 -O3 -o cuda_demo cuda_demo.cu
-- Run the Python demo script:
-  python simple_cuda_demo.py
-- The script runs matrix benchmarks and prints CPU vs GPU timings.
+Build the CUDA kernels and C++ monitor
+- Requires the CUDA Toolkit 11.0+ (nvcc) and CMake 3.20+.
+- Set CMAKE_CUDA_ARCHITECTURES to your GPU: 75 = GTX 16xx / RTX 20xx, 86 = RTX 30xx, 89 = RTX 40xx.
+  cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=75
+  cmake --build build --config Release
+- Or run the wrapper scripts, which also set up the Python environment:
+  (Windows) .\build.bat
+  (Linux) ./build.sh
+- With the Visual Studio generator on Windows, binaries land in build\Release\.
 
-Generate GPU load (optional)
-- To create activity and observe dashboard changes:
-  python gpu_load_test.py
+Validate and benchmark the CUDA kernels
+- Check every kernel against the CPU reference on square and odd-sized shapes:
+  ./build/matmul_benchmark --check
+  (ctest --test-dir build runs the same check.)
+- Time every kernel on N x N matrices (default 1024):
+  ./build/matmul_benchmark 2048
+  Expected: one row per kernel with time, GFLOP/s, speedup over the single-threaded
+  CPU reference, max error, and PASS/FAIL. Large N takes a while because the CPU
+  reference is computed first.
+- Run it with the dashboard open to see utilization and power change.
 
-Build native components (optional)
-- Windows:
-  .\build.bat
-- Linux/macOS:
-  ./build.sh
+Run the C++ NVML monitor
+- ./build/gpu_optimizer prints utilization, memory, and temperature every 2 seconds.
+  ./build/gpu_optimizer --help lists the options.
 
 Common troubleshooting
 - NVML/library not found: update NVIDIA drivers and ensure driver libraries are on the system path.
