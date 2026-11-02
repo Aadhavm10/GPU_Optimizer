@@ -1,33 +1,55 @@
 # GPU Utilization Optimizer
 
-A compact toolkit for monitoring, profiling, and demonstrating GPU performance improvements on NVIDIA hardware. The project provides real-time telemetry, a Dash web dashboard for visualization, and CUDA performance demos that illustrate common kernel optimizations.
+Real-time NVIDIA GPU monitoring dashboard plus hand-written CUDA kernels that take matrix multiplication from naive to optimized.
 
-What it is
-- A monitoring and optimization demonstration toolkit that collects NVML metrics, displays live and historical charts, and includes CUDA examples (naive, tiled, optimized) to illustrate performance improvements.
+![CUDA](https://img.shields.io/badge/CUDA-76B900?logo=nvidia&logoColor=white)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
+![Plotly Dash](https://img.shields.io/badge/Plotly%20Dash-3F4F75?logo=plotly&logoColor=white)
+![CMake](https://img.shields.io/badge/CMake-064F8C?logo=cmake&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-Why it exists
-- To make GPU performance visible and actionable: identify underutilization, reproduce benchmarks, and validate kernel- and runtime-level optimizations.
+![Dashboard overview](screenshots/dashboard-overview.png)
 
-How it was created (tech stack)
-- Languages: Python (primary), C++ (small components), CUDA (.cu), shell/PowerShell for automation.
-- Telemetry: NVML via Python bindings (pynvml / nvidia-ml-py).
-- Visualization: Dash (Plotly) served from Python (Flask).
-- CUDA toolchain: CUDA Toolkit (nvcc); optional Visual Studio Build Tools on Windows.
-- Packaging: pip / virtualenv; simple build scripts (build.bat / build.sh); CMake available for native builds.
+## Highlights
 
-Screenshots
-- Web dashboard (live metrics):
-  ![Dashboard overview](screenshots/dashboard-overview.png)
-- Command-line monitor:
-  ![Command-line monitor](screenshots/command-line-monitor.png)
+- **Live GPU telemetry:** reads utilization, memory, temperature and power through NVIDIA's NVML API and charts them in a Plotly Dash web dashboard that refreshes every 2 seconds.
+- **CUDA kernel optimization:** matrix multiply written six ways (naive, tiled, shared memory, `float4`-vectorized, double-buffered, warp-tiled), plus parallel reductions and vector ops (SAXPY, dot product, norm, min/max).
+- **Native C++ monitor:** NVML device discovery, metrics collection and processing, config and logging in C++17, built with CMake.
+- **Cross-platform tooling:** build and setup scripts for both Windows and Linux.
 
-Key components (relevant)
-- simple_gpu_monitor.py — CLI monitor using NVML
-- simple_dashboard.py / gpu_dashboard.py — Dash web dashboard
-- cuda_demo.cu, simple_cuda_demo.py — CUDA kernels and Python demo
-- gpu_load_test.py — synthetic load generator
-- build.bat, build.sh, setup_windows.ps1, CMakeLists.txt
-- requirements.txt, setup.py
+## Quick start
 
-Next step
-- See RUN_GUIDE.md for the minimal run instructions and troubleshooting.
+Requires an NVIDIA GPU with current drivers.
+
+```bash
+git clone https://github.com/Aadhavm10/GPU_Optimizer.git
+cd GPU_Optimizer
+python -m venv venv
+source venv/bin/activate        # Windows: .\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python simple_dashboard.py      # then open http://localhost:8050
+```
+
+For the CLI monitor, the CUDA benchmark build and troubleshooting, see [RUN_GUIDE.md](RUN_GUIDE.md).
+
+## Command-line monitor
+
+![Command-line monitor](screenshots/command-line-monitor.png)
+
+## Project structure
+
+```
+src/cuda/              CUDA kernels (matrix_ops, vector_ops) and profiling timers
+src/nvml/              C++ NVML monitor and metrics collector
+src/common/            Config and logging
+simple_dashboard.py    Dash web dashboard
+simple_gpu_monitor.py  Command-line monitor
+cuda_demo.cu           Standalone matmul benchmark (naive / tiled / optimized)
+gpu_load_test.py       Synthetic GPU load to exercise the dashboard
+CMakeLists.txt         Native C++/CUDA build
+```
+
+## License
+
+[MIT](LICENSE)
