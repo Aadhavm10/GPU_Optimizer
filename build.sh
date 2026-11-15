@@ -217,21 +217,6 @@ run_tests() {
     cd ..
 }
 
-# Function to install Python package
-install_python_package() {
-    print_status "Installing Python package..."
-    
-    # Activate virtual environment if it exists
-    if [[ -d "venv" ]]; then
-        source venv/bin/activate
-    fi
-    
-    # Install in development mode
-    pip install -e .
-    
-    print_success "Python package installed"
-}
-
 # Function to run basic verification
 verify_installation() {
     print_status "Verifying installation..."
@@ -361,11 +346,6 @@ main() {
         run_tests
     fi
     
-    # Install Python package
-    if [[ "$NO_PYTHON" == false ]]; then
-        install_python_package
-    fi
-    
     # Verify installation
     verify_installation
     
@@ -379,8 +359,7 @@ main() {
     echo "  2. Start monitoring:       ./build/gpu_optimizer"
     echo ""
     if [[ "$NO_PYTHON" == false ]]; then
-        echo "  4. Start Python dashboard: source venv/bin/activate && gpu-dashboard"
-        echo "  5. Use Python API:         python -c \"import gpu_optimizer; gpu_optimizer.check_requirements()\""
+        echo "  3. Start the dashboard:    source venv/bin/activate && python simple_dashboard.py"
         echo ""
     fi
     echo "For more information, see README.md"
