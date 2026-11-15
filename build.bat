@@ -235,19 +235,6 @@ if %NO_TESTS% equ 0 (
     cd ..
 )
 
-REM Install Python package
-if %NO_PYTHON% equ 0 (
-    echo %INFO_PREFIX% Installing Python package...
-    
-    REM Activate virtual environment if it exists
-    if exist venv call venv\Scripts\activate.bat
-    
-    REM Install in development mode
-    pip install -e .
-    
-    echo %SUCCESS_PREFIX% Python package installed
-)
-
 REM Verify installation
 echo %INFO_PREFIX% Verifying installation...
 
@@ -274,8 +261,7 @@ echo   1. Benchmark the kernels:  build\matmul_benchmark.exe 2048
 echo   2. Start monitoring:       build\gpu_optimizer.exe
 echo.
 if %NO_PYTHON% equ 0 (
-    echo   4. Start Python dashboard: venv\Scripts\activate ^&^& gpu-dashboard
-    echo   5. Use Python API:         python -c "import gpu_optimizer; gpu_optimizer.check_requirements()"
+    echo   3. Start the dashboard:    venv\Scripts\activate ^&^& python simple_dashboard.py
     echo.
 )
 echo For more information, see README.md

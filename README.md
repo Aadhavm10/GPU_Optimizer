@@ -26,17 +26,17 @@ Real-time NVIDIA GPU monitoring dashboard plus CUDA SGEMM kernels that take matr
 
 `matmul_benchmark 2048` on a Tesla T4 (Google Colab), 2048×2048 float32:
 
-| Kernel | Time (ms) | GFLOP/s | vs CPU |
+| Kernel | Time (ms) | GFLOP/s | vs naive |
 |---|---:|---:|---:|
-| naive | 39.3 | 437 | 46× |
-| tiled 16×16 | 26.1 | 659 | 70× |
-| tiled 32×32 | 19.8 | 869 | 92× |
-| double-buffered 32×32 | 19.4 | 886 | 94× |
-| float4, 4 outputs/thread | 13.5 | 1,277 | 135× |
+| naive | 39.3 | 437 | 1.0× |
+| tiled 16×16 | 26.1 | 659 | 1.5× |
+| tiled 32×32 | 19.8 | 869 | 2.0× |
+| double-buffered 32×32 | 19.4 | 886 | 2.0× |
+| float4, 4 outputs/thread | 13.5 | 1,277 | 2.9× |
 
 - **Correctness:** every kernel matches the CPU reference, with a max abs error of 3.8e-5. All 45 `--check` cases pass.
 - **Timing:** kernel-only, the mean of 10 launches measured with CUDA events.
-- **CPU baseline:** "vs CPU" compares against a single-threaded triple loop, which took 1.82 s (9.45 GFLOP/s).
+- **CPU reference:** a single-threaded triple loop, used to check correctness; it took 1.82 s (9.45 GFLOP/s), so speedups over it say little about the kernels themselves.
 - **Headroom:** the fastest kernel reaches about 16% of the T4's 8.1 TFLOPS FP32 peak.
 
 ## Quick start
